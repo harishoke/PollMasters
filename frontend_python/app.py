@@ -23,6 +23,10 @@ TEMPLATES_FILE = "poll_templates.json"
 
 # --- Global Variables ---
 sio_connected = False
+chat_mapping = {} 
+active_polls_data_from_server = {}
+whatsapp_client_actually_ready = False # අලුතින් එකතු කළ flag එක
+sio_connected = False
 chat_mapping = {} # Stores display_name -> chat_id
 active_polls_data_from_server = {} # Stores {poll_msg_id: poll_data_object}
 
@@ -68,25 +72,31 @@ def qr_code(qr_data_from_socket): # Renamed to avoid conflict with qrcode module
 
 @sio.event
 def client_status(status): # Server emits 'client_status'
+    global whatsapp_client_actually_ready # Global විදියට declare කරන්න
     print(f"WhatsApp Client Status from Socket.IO: {status}")
     if 'status_label' in globals() and status_label.winfo_exists():
         if status == 'ready':
+            whatsapp_client_actually_ready = True # Flag එක True කරන්න
             update_status_label("WhatsApp Client is READY!", "green")
             if 'qr_display_label' in globals() and qr_display_label.winfo_exists():
                 qr_display_label.config(image='', text="WhatsApp Client READY!")
             fetch_chats()
-            fetch_all_poll_data_from_server() # Fetch initial poll data
+            fetch_all_poll_data_from_server()
         elif status == 'qr_pending':
+            whatsapp_client_actually_ready = False # Flag එක False කරන්න
             update_status_label("Waiting for QR scan (check Connection Tab)...", "orange")
         elif status == 'logged_out':
+            whatsapp_client_actually_ready = False # Flag එක False කරන්න
             update_status_label(f"WhatsApp: Logged Out. Delete 'baileys_auth_info' & restart Node server to connect new.", "red")
             clear_session_gui_elements()
         elif status in ['disconnected', 'auth_failure']:
+            whatsapp_client_actually_ready = False # Flag එක False කරන්න
             update_status_label(f"WhatsApp: {status}. Please connect/reconnect.", "red")
-            # Optionally clear some elements, or wait for reconnection attempts
-            # clear_session_gui_elements() # Be cautious with this on temp disconnects
+            # clear_session_gui_elements() # තාවකාලිකව disconnect වෙනකොට clear කරන එක ගැන සැලකිලිමත් වෙන්න
 
 def clear_session_gui_elements():
+    global active_polls_data_from_server, whatsapp_client_actually_ready # Flag එක මෙතනටත් add කරන්න
+    whatsapp_client_actually_ready = False # Logout/clear වලදී False කරන්න
     global active_polls_data_from_server
     active_polls_data_from_server = {}
     if 'qr_display_label' in globals() and qr_display_label.winfo_exists(): qr_display_label.config(image='', text="QR Code (Logged Out)")
@@ -265,10 +275,9 @@ def fetch_chats():
         print(f"Unexpected fetch chats error: {e}")
 
 def client_is_ready(): # Helper
-    # Check based on status label text or a more direct flag if available from client_status socket event
-    if 'status_label' in globals() and status_label.winfo_exists():
-        return "READY" in status_label.cget("text").upper()
-    return False
+    global whatsapp_client_actually_ready
+    # print(f"Debug: client_is_ready() called. Flag is: {whatsapp_client_actually_ready}") # Debugging සඳහා
+    return whatsapp_client_actually_ready
 
 # --- Poll Sender Functions ---
 def send_poll_message():
@@ -620,7 +629,12 @@ def logout_and_reconnect():
         threading.Thread(target=_logout_threaded, daemon=True).start()
 
 def _logout_threaded():
-    global active_polls_data_from_server
+    global active_polls_data_from_server, whatsapp_client_actually_ready # Flag එක මෙතනටත් add කරන්න
+
+    # Logout උත්සාහය පටන් ගන්නකොටම Client එක not ready විදියට සලකන්න
+    root.after(0, lambda: globals().update(whatsapp_client_actually_ready=False)) 
+    # GUI update එක main thread එකෙන් කරන්න root.after භාවිතා කරනවා
+
     try:
         response = requests.post(NODE_API_LOGOUT, timeout=15) # Slightly longer timeout for logout
         response.raise_for_status()
