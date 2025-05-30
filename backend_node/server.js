@@ -1,5 +1,5 @@
-// server.js (முக்கிய වෙනස්කම්)
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay, jidNormalizedUser } = require('@whiskeysockets/baileys');
+// server.js 
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay, jidNormalizedUser, getAggregateVotesInPollMessage, proto } = require('@whiskeysockets/baileys'); // Added getAggregateVotesInPollMessage and proto
 const { Boom } = require('@hapi/boom');
 const express = require('express');
 const http = require('http');
@@ -7,9 +7,9 @@ const { Server } = require('socket.io');
 const pino = require('pino');
 const fs = require('fs').promises;
 const path = require('path');
-const crypto = require('crypto'); // To generate SHA256 hashes for poll options
+const crypto = require('crypto');
 
-const app =express();
+const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -21,19 +21,6 @@ let sock;
 let clientReady = false;
 let qrCodeData = null;
 
-// In-memory store for active polls and their results
-// Structure:
-// {
-//   "pollMsgId_1": {
-//     question: "Poll Question 1",
-//     options: ["Option A", "Option B"], // Original options text
-//     optionHashes: { "hashOfA": "Option A", "hashOfB": "Option B" },
-//     results: { "Option A": 0, "Option B": 0 }, // Vote counts
-//     voters: { "voterJid1": "hashOfA", "voterJid2": "hashOfB" }, // To track who voted for what (optional for preventing re-vote)
-//     chatId: "original_chat_id_where_poll_was_sent",
-//     timestamp: 1678886400000
-//   }
-// }
 let activePolls = {}; // Store for polls sent in the current session
 
 function generateOptionSha256(optionText) {
@@ -41,8 +28,6 @@ function generateOptionSha256(optionText) {
 }
 
 async function connectToWhatsApp() {
-    // ... (කලින් තිබූ Baileys connection logic එක එහෙමමයි)
-    // फक्त logger level එක 'debug' වලට දාගන්න, poll updates හරියට එනවද බලන්න
     console.log('Initializing Baileys WhatsApp Client (Poll Focus)...');
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -50,166 +35,198 @@ async function connectToWhatsApp() {
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: true, // QR code එක terminal එකේ පෙන්වයි
         browser: ['WhatsApp Poll Enhanced', 'Chrome', '1.0'],
-        logger: pino({ level: 'debug' }) // DEBUG level to see more logs, including poll updates
+        logger: pino({ level: 'debug' }) // DEBUG level to see more logs
     });
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        // ... (කලින් තිබූ connection update logic එක එහෙමමයි)
         if (connection === 'open') {
             console.log('Baileys WhatsApp Client is ready! (Poll Focus)');
             clientReady = true;
             qrCodeData = null;
             io.emit('client_status', 'ready');
+            io.emit('whatsapp_user', sock.user); // Send user info
         } else if (connection === 'close') {
             clientReady = false;
-            // ... (rest of close logic)
+            qrCodeData = null; // Clear QR on close
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Connection closed due to ', lastDisconnect?.error, ', reconnecting ', shouldReconnect);
+            io.emit('client_status', 'disconnected');
+            if (shouldReconnect) {
+                connectToWhatsApp();
+            } else {
+                console.log('Logged out, not reconnecting. Please delete baileys_auth_info and restart.');
+                // Optionally, inform GUI about permanent logout
+                io.emit('client_status', 'logged_out');
+            }
         }
         if (qr) {
             qrCodeData = qr;
             io.emit('qr_code', qr);
             io.emit('client_status', 'qr_pending');
+            console.log('QR code generated. Scan it.');
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return; // Only process new messages
+        if (type !== 'notify') return;
 
         const msg = messages[0];
+        if (!msg.message) return; // Ignore if message content is empty
+
         // console.log('Received message:', JSON.stringify(msg, undefined, 2)); // Detailed log for incoming messages
 
-        if (msg.message && msg.message.pollUpdateMessage) {
+        if (msg.message.pollUpdateMessage) {
             const pollUpdate = msg.message.pollUpdateMessage;
             const originalPollMsgKey = pollUpdate.pollCreationMessageKey;
-            const voterJid = msg.key.participant || msg.key.remoteJid; // Participant in group, remoteJid in PM
+            // voterJid can be from msg.key.participant (group) or msg.key.remoteJid (DM, if direct poll update)
+            // However, poll updates in groups are usually from the group jid with a participant field inside msg.
+            const voterJid = msg.key.participant || msg.participant || msg.key.remoteJid;
+
 
             if (!originalPollMsgKey || !originalPollMsgKey.id) {
-                console.warn("Poll update received without original poll message key ID. Skipping.");
+                console.warn("Poll update received without original poll message key ID. Skipping. Details:", JSON.stringify(originalPollMsgKey));
                 return;
             }
             const pollMsgId = originalPollMsgKey.id;
 
             console.log(`Poll Update for Poll ID: ${pollMsgId} from Voter: ${voterJid}`);
-            // console.log('Poll Update Details:', JSON.stringify(pollUpdate, undefined, 2));
-
+            // console.log('Poll Update Raw Details:', JSON.stringify(pollUpdate, undefined, 2));
 
             if (activePolls[pollMsgId]) {
                 const poll = activePolls[pollMsgId];
-                // Assuming pollUpdate.votes contains an array of selectedOption (Buffers)
-                // Each selectedOption is a SHA256 hash of the option string
-                const selectedOptionHashes = pollUpdate.votes.map(vote => Buffer.from(vote.selectedOption).toString('hex'));
+                let selectedOptionHashes = [];
 
-                // Clear previous votes from this voter for this poll before applying new ones
-                // (A user can change their vote, pollUpdate usually sends all current selections)
-                for (const optionText in poll.results) {
-                    if (poll.voters[voterJid] && poll.optionHashes[poll.voters[voterJid]] === optionText) {
-                        // This logic is a bit complex if a voter previously voted for multiple options
-                        // and now changes one. Simpler: Reset this voter's previous votes if any.
-                    }
-                }
-                // A simpler way to handle vote changes:
-                // Reset counts that this voter contributed to, then add new votes.
-                // This needs careful thought if a user could previously vote for multiple options
-                // and now only for one, or changes their multi-vote.
-                // For now, let's assume a user's new vote update replaces their old one entirely.
-
-                // First, identify what this voter previously voted for and decrement those counts
-                if (poll.voters[voterJid]) { // If voter had previous votes stored
-                    const previousVoteHashes = Array.isArray(poll.voters[voterJid]) ? poll.voters[voterJid] : [poll.voters[voterJid]];
-                    previousVoteHashes.forEach(prevHash => {
-                        const optionText = poll.optionHashes[prevHash];
-                        if (optionText && poll.results[optionText] > 0) {
-                            poll.results[optionText]--;
+                // --- TypeError නිවැරදි කිරීම මෙතන ---
+                if (pollUpdate.votes && Array.isArray(pollUpdate.votes)) {
+                    selectedOptionHashes = pollUpdate.votes.map(voteBuffer => {
+                        if (Buffer.isBuffer(voteBuffer)) {
+                            return voteBuffer.toString('hex');
+                        } else {
+                            console.warn(`Item in pollUpdate.votes for poll ${pollMsgId} is not a Buffer. Item:`, voteBuffer);
+                            return null;
                         }
-                    });
+                    }).filter(hash => hash !== null);
+                } else {
+                    console.log(`Poll update for ${pollMsgId} (voter: ${voterJid}) did not contain a valid 'votes' array or it's empty. Current votes data:`, pollUpdate.votes);
+                }
+                // --- නිවැරදි කිරීම අවසන් ---
+
+                // Recalculate entire poll results based on all stored voter responses for this poll
+                // This is more robust for handling vote changes and ensuring count accuracy.
+
+                // 1. Update this voter's current selection
+                if (selectedOptionHashes.length > 0) {
+                    poll.voters[voterJid] = selectedOptionHashes; // Store/update this voter's current selection
+                } else {
+                    // If selectedOptionHashes is empty, it means the voter deselected all their options (if possible)
+                    // or the update didn't contain votes. We might remove their entry or handle as no vote.
+                    delete poll.voters[voterJid]; // Voter retracted their vote(s)
+                    console.log(`Voter ${voterJid} retracted votes for poll ${pollMsgId}`);
                 }
 
-                // Update with new votes
-                let votedOptionsText = [];
-                selectedOptionHashes.forEach(hash => {
-                    const optionText = poll.optionHashes[hash];
-                    if (optionText) {
-                        poll.results[optionText]++;
-                        votedOptionsText.push(optionText);
-                    } else {
-                        console.warn(`Unknown option hash ${hash} received for poll ${pollMsgId}`);
+                // 2. Recalculate all results for the poll
+                // Reset current results to 0
+                for (const optionText in poll.results) {
+                    poll.results[optionText] = 0;
+                }
+
+                // Iterate through all stored voters and their selections
+                for (const singleVoterJid in poll.voters) {
+                    const voterSelections = poll.voters[singleVoterJid]; // This is an array of hashes
+                    if (Array.isArray(voterSelections)) {
+                        voterSelections.forEach(hash => {
+                            const optionText = poll.optionHashes[hash];
+                            if (optionText && poll.results.hasOwnProperty(optionText)) {
+                                poll.results[optionText]++;
+                            }
+                        });
                     }
-                });
-                poll.voters[voterJid] = selectedOptionHashes; // Store current vote hashes for this voter
+                }
+                // --- End of recalculation logic ---
 
                 console.log(`Updated poll results for ${pollMsgId}:`, poll.results);
-                io.emit('poll_update_to_gui', { pollMsgId: pollMsgId, results: poll.results, question: poll.question, options: poll.options });
+                console.log(`Voters for ${pollMsgId}:`, poll.voters)
+                io.emit('poll_update_to_gui', {
+                    pollMsgId: pollMsgId,
+                    results: poll.results,
+                    question: poll.question,
+                    options: poll.options, // Pass original options array
+                    voters: poll.voters, // Pass updated voters object
+                    selectableCount: poll.selectableCount // Pass selectableCount for context
+                });
+
             } else {
-                console.warn(`Received poll update for an unknown or inactive poll ID: ${pollMsgId}`);
+                console.warn(`Received poll update for an unknown or inactive poll ID: ${pollMsgId}. Active polls:`, Object.keys(activePolls));
             }
         }
     });
 }
 
-connectToWhatsApp(); // Initialize connection
+connectToWhatsApp();
 
 io.on('connection', (socket) => {
-    console.log('GUI connected via Socket.IO');
+    console.log('GUI connected via Socket.IO:', socket.id);
     socket.emit('client_status', clientReady ? 'ready' : (qrCodeData ? 'qr_pending' : 'disconnected'));
+    if (clientReady && sock.user) socket.emit('whatsapp_user', sock.user);
     if (qrCodeData) socket.emit('qr_code', qrCodeData);
-    // Send all current poll data to a newly connected client
-    socket.emit('initial_poll_data', activePolls);
+    socket.emit('initial_poll_data', activePolls); // Send all current poll data
 });
 
-// API Endpoints
-app.get('/status', (req, res) => res.json({ status: clientReady ? 'ready' : (qrCodeData ? 'qr_pending' : 'disconnected'), qrCode: qrCodeData }));
+app.get('/status', (req, res) => res.json({ status: clientReady ? 'ready' : (qrCodeData ? 'qr_pending' : 'disconnected'), qrCode: qrCodeData, user: clientReady && sock ? sock.user : null }));
 
 app.post('/send-poll', async (req, res) => {
     if (!clientReady || !sock) return res.status(400).json({ success: false, message: 'Baileys client not ready.' });
 
-    const { chatId, question, options, allowMultipleAnswers } = req.body; // allowMultipleAnswers from app.py
+    const { chatId, question, options, allowMultipleAnswers } = req.body;
 
-    if (!chatId || !question || !options || !Array.isArray(options) || options.length < 1) { // Poll needs at least 1 option
+    if (!chatId || !question || !options || !Array.isArray(options) || options.length < 1) {
         return res.status(400).json({ success: false, message: 'chatId, question, and at least one option required.' });
     }
-    if (options.length > 12) { // WhatsApp limit for poll options
+    if (options.length > 12) {
         return res.status(400).json({ success: false, message: 'Maximum of 12 poll options allowed.' });
     }
 
-
     try {
-        await delay(500 + Math.random() * 1000);
+        // await delay(500 + Math.random() * 1000); // Optional delay
 
-        const pollMessage = {
+        const pollMessagePayload = {
             name: question,
             values: options,
-            selectableCount: allowMultipleAnswers ? 0 : 1, // 0 for multiple, 1 for single
+            selectableCount: allowMultipleAnswers ? 0 : 1,
         };
 
-        const sentMsg = await sock.sendMessage(chatId, { poll: pollMessage });
+        const sentMsg = await sock.sendMessage(chatId, { poll: pollMessagePayload });
         const pollMsgId = sentMsg.key.id;
 
-        // Store poll info for tracking results
         const optionHashes = {};
         const initialResults = {};
         options.forEach(opt => {
-            optionHashes[generateOptionSha256(opt)] = opt;
+            const hash = generateOptionSha256(opt); // Use the same hash function
+            optionHashes[hash] = opt;
             initialResults[opt] = 0;
         });
 
         activePolls[pollMsgId] = {
             question: question,
-            options: options,
-            optionHashes: optionHashes,
-            results: initialResults,
-            voters: {},
+            options: options, // Store original option strings
+            optionHashes: optionHashes, // Store mapping from hash to option string
+            results: initialResults, // Store results by option string
+            voters: {}, // Store votes by voter JID -> array of selected hashes
             chatId: chatId,
-            timestamp: Date.now(),
-            selectableCount: pollMessage.selectableCount
+            timestamp: typeof sentMsg.messageTimestamp === 'number' ? sentMsg.messageTimestamp * 1000 : Date.now(), // Ensure JS timestamp
+            selectableCount: pollMessagePayload.selectableCount,
+            // messageDetails: sentMsg // Optional: store full sent message
         };
 
         console.log(`Poll sent successfully to ${chatId}, Msg ID: ${pollMsgId}`);
-        console.log("Active Polls:", activePolls);
-        io.emit('new_poll_sent', activePolls[pollMsgId]); // Inform GUI about the new poll for the results tab
+        console.log("Active Polls now:", activePolls);
+        // Emit the newly created poll data for GUI to update its list
+        io.emit('new_poll_sent', { pollMsgId: pollMsgId, pollData: activePolls[pollMsgId] });
         res.json({ success: true, message: 'Poll sent successfully!', pollMsgId: pollMsgId });
 
     } catch (error) {
@@ -219,7 +236,6 @@ app.post('/send-poll', async (req, res) => {
 });
 
 app.get('/get-chats', async (req, res) => {
-    // ... (කලින් තිබූ /get-chats logic එක එහෙමමයි, template sender එකට අදාළ නැති නිසා)
     if (!clientReady || !sock) {
         return res.status(400).json({ success: false, message: 'Baileys WhatsApp client is not ready.' });
     }
@@ -231,15 +247,11 @@ app.get('/get-chats', async (req, res) => {
                 simplifiedChats.push({ id: jid, name: group.subject, isGroup: true });
             }
         }
-        if (sock.contacts) {
-            for (const contact of Object.values(sock.contacts)) {
-                if (contact.id && contact.id.endsWith('@s.whatsapp.net') && !contact.id.includes('@g.us') && contact.name) {
-                    if (!simplifiedChats.some(c => c.id === contact.id)) {
-                        simplifiedChats.push({ id: contact.id, name: contact.name, isGroup: false });
-                    }
-                }
-            }
-        }
+         // sock.contacts might not be populated immediately or in all Baileys versions by default
+         // It's better to rely on specific functions if needed, or ensure it's populated
+        // For now, this might return an empty list or be unreliable.
+        // Consider using sock.getContacts() or similar if you need a full contact list.
+
         simplifiedChats.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         res.json({ success: true, chats: simplifiedChats });
     } catch (error) {
@@ -249,29 +261,52 @@ app.get('/get-chats', async (req, res) => {
 });
 
 app.post('/logout', async (req, res) => {
-    // ... (කලින් තිබූ /logout logic එක එහෙමමයි)
     console.log('Received logout request.');
     if (sock) {
         try {
-            await sock.logout();
-            console.log('Baileys client logged out successfully.');
-        } catch (error) { console.error('Error during Baileys logout:', error); }
-        finally {
+            await sock.logout(); // This logs out from WhatsApp Web
+            console.log('Baileys client logged out successfully from WhatsApp.');
+        } catch (error) {
+            console.error('Error during Baileys logout from WhatsApp:', error);
+        } finally {
+            // Clean up local session state
+            if (sock && typeof sock.end === 'function') {
+                sock.end(new Error('Logged out by user request')); // Properly close the socket connection
+            }
             const sessionPath = path.join(__dirname, 'baileys_auth_info');
-            try { await fs.rm(sessionPath, { recursive: true, force: true }); console.log('Session folder "baileys_auth_info" deleted.'); }
-            catch (err) { console.error('Error deleting session folder:', err); }
-            clientReady = false; qrCodeData = null; activePolls = {}; // Clear active polls on logout
-            io.emit('client_status', 'disconnected'); io.emit('all_polls_data', activePolls); // Send empty polls
-            res.json({ success: true, message: 'Logged out and session cleared.' });
+            try {
+                await fs.rm(sessionPath, { recursive: true, force: true });
+                console.log('Session folder "baileys_auth_info" deleted.');
+            } catch (err) {
+                console.error('Error deleting session folder:', err.code === 'ENOENT' ? 'Session folder not found.' : err);
+            }
+            clientReady = false;
+            qrCodeData = null;
+            activePolls = {}; // Clear active polls on logout
+            sock = undefined; // Clear the sock variable
+
+            io.emit('client_status', 'disconnected');
+            io.emit('initial_poll_data', activePolls); // Send empty polls
+            res.json({ success: true, message: 'Logged out and local session cleared. Please restart the server to connect a new account.' });
         }
-    } else { /* ... */ res.status(400).json({ success: false, message: 'Client not active.' });}
+    } else {
+        // Also clear local session if sock is somehow undefined but user wants to "logout"
+        const sessionPath = path.join(__dirname, 'baileys_auth_info');
+            try {
+                await fs.rm(sessionPath, { recursive: true, force: true });
+                console.log('Session folder "baileys_auth_info" deleted (sock was undefined).');
+            } catch (err) {
+                console.error('Error deleting session folder (sock was undefined):', err.code === 'ENOENT' ? 'Session folder not found.' : err);
+            }
+        clientReady = false; qrCodeData = null; activePolls = {};
+        io.emit('client_status', 'disconnected'); io.emit('initial_poll_data', activePolls);
+        res.status(400).json({ success: false, message: 'Client was not active, but attempted to clear session.' });
+    }
 });
 
-// New endpoint to get all poll data
 app.get('/get-all-poll-data', (req, res) => {
     res.json({ success: true, polls: activePolls });
 });
-
 
 server.listen(PORT, () => {
     console.log(`Node.js server (Poll Focus) listening on port ${PORT}`);
