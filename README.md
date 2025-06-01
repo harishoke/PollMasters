@@ -1,4 +1,4 @@
-# PollMasters - WhatsApp Poll Management Tool
+# PollMasters - Poll Management Tool For WA
 
 PollMasters is a desktop application designed to help you create, send, and manage polls on WhatsApp. It features a Node.js backend that uses the Baileys library to interact with WhatsApp, and a Python Tkinter frontend for a user-friendly graphical interface.
 
