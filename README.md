@@ -89,7 +89,7 @@ Use this tool responsibly and be mindful of WhatsApp's Terms of Service. Automat
     The server will start. If you're not logged in to WhatsApp, it should print a QR code in the terminal (and also send it to the GUI once the GUI connects).
 
 2.  **Run the Frontend GUI:**
-    Open another terminal, navigate to the `frontend_python` directory (or the root `PollMasters-90385d64a5a90c82e73013062db55ec42c6cdff9` directory if `app.py` is run from there and `poll_templates.json` is also at the root), and run:
+    Open another terminal, navigate to the `frontend_python` directory (or the root `PollMasters` directory if `app.py` is run from there and `poll_templates.json` is also at the root), and run:
     ```bash
     # If app.py is inside frontend_python and poll_templates.json is at project root:
     # You might need to run app.py from the project root or adjust TEMPLATES_FILE path in app.py
