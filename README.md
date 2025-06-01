@@ -56,10 +56,9 @@ Use this tool responsibly and be mindful of WhatsApp's Terms of Service. Automat
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
-    cd PollMasters-90385d64a5a90c82e73013062db55ec42c6cdff9 
+    git clone https://github.com/harishoke/PollMasters
+    cd PollMasters
     ```
-    (Replace `<your-repository-url>` with the actual URL of your repository after you upload it).
 
 2.  **Backend Setup (Node.js):**
     Navigate to the backend directory and install dependencies:
