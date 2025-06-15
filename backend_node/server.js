@@ -1,4 +1,4 @@
-// server.js 
+// server.js
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay, jidNormalizedUser, getAggregateVotesInPollMessage, proto } = require('@whiskeysockets/baileys'); // Added getAggregateVotesInPollMessage and proto
 const { Boom } = require('@hapi/boom');
 const express = require('express');
@@ -8,6 +8,8 @@ const pino = require('pino');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+
+const POLL_STORAGE_FILE = path.join(__dirname, 'active_polls_storage.json');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,11 +25,37 @@ let qrCodeData = null;
 
 let activePolls = {}; // Store for polls sent in the current session
 
+async function saveActivePolls() {
+    try {
+        await fs.writeFile(POLL_STORAGE_FILE, JSON.stringify(activePolls, null, 2));
+        console.log('Active polls saved to storage.');
+    } catch (error) {
+        console.error('Error saving active polls:', error);
+    }
+}
+
+async function loadActivePolls() {
+    try {
+        if (await fs.stat(POLL_STORAGE_FILE).then(() => true).catch(() => false)) {
+            const data = await fs.readFile(POLL_STORAGE_FILE, 'utf-8');
+            activePolls = JSON.parse(data);
+            console.log('Active polls loaded from storage.');
+        } else {
+            console.log('No active polls storage file found. Starting fresh.');
+            activePolls = {};
+        }
+    } catch (error) {
+        console.error('Error loading active polls:', error);
+        activePolls = {}; // Reset on error to prevent issues
+    }
+}
+
 function generateOptionSha256(optionText) {
     return crypto.createHash('sha256').update(Buffer.from(optionText)).digest('hex');
 }
 
 async function connectToWhatsApp() {
+    await loadActivePolls(); // Load polls before starting connection
     console.log('Initializing Baileys WhatsApp Client (Poll Focus)...');
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -159,7 +187,7 @@ async function connectToWhatsApp() {
                     voters: poll.voters, // Pass updated voters object
                     selectableCount: poll.selectableCount // Pass selectableCount for context
                 });
-
+                await saveActivePolls(); // Save polls after update
             } else {
                 console.warn(`Received poll update for an unknown or inactive poll ID: ${pollMsgId}. Active polls:`, Object.keys(activePolls));
             }
@@ -227,6 +255,7 @@ app.post('/send-poll', async (req, res) => {
         console.log("Active Polls now:", activePolls);
         // Emit the newly created poll data for GUI to update its list
         io.emit('new_poll_sent', { pollMsgId: pollMsgId, pollData: activePolls[pollMsgId] });
+        await saveActivePolls(); // Save polls after sending a new one
         res.json({ success: true, message: 'Poll sent successfully!', pollMsgId: pollMsgId });
 
     } catch (error) {
@@ -283,6 +312,7 @@ app.post('/logout', async (req, res) => {
             clientReady = false;
             qrCodeData = null;
             activePolls = {}; // Clear active polls on logout
+            await saveActivePolls(); // Save the cleared state
             sock = undefined; // Clear the sock variable
 
             io.emit('client_status', 'disconnected');
@@ -299,6 +329,7 @@ app.post('/logout', async (req, res) => {
                 console.error('Error deleting session folder (sock was undefined):', err.code === 'ENOENT' ? 'Session folder not found.' : err);
             }
         clientReady = false; qrCodeData = null; activePolls = {};
+        await saveActivePolls(); // Save the cleared state even if sock was undefined
         io.emit('client_status', 'disconnected'); io.emit('initial_poll_data', activePolls);
         res.status(400).json({ success: false, message: 'Client was not active, but attempted to clear session.' });
     }
