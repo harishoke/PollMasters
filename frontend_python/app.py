@@ -669,14 +669,7 @@ status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
 main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
 main_frame.pack(fill=tk.BOTH, expand=True)
 
-# Styling for ttk widgets
-style = ttk.Style()
-try:
-    style.theme_use('clam')
-except tk.TclError:
-    print("Clam theme not available, using default.") # Fallback for environments where clam is not present
-
-# Define base font styles
+# Define base font styles first, as they are used by status_label before style object is fully configured
 base_font_family = "Segoe UI"
 base_font_size = 10
 bold_font_size = 10
@@ -692,6 +685,13 @@ tab_font = (base_font_family, bold_font_size, "bold")
 labelframe_label_font = (base_font_family, bold_font_size, "bold")
 main_title_font = (base_font_family, 14, "bold")
 small_bold_font = (base_font_family, 9, "bold")
+
+# Styling for ttk widgets
+style = ttk.Style()
+try:
+    style.theme_use('clam')
+except tk.TclError:
+    print("Clam theme not available, using default.") # Fallback for environments where clam is not present
 
 # Configure styles
 style.configure("TNotebook", tabposition='n') # Tabs on top
