@@ -663,19 +663,6 @@ root = tk.Tk()
 root.title(f"WhatsApp Poll Master Deluxe - v{APP_VERSION}") # Include version in title
 root.geometry("950x800") # Slightly larger
 
-status_label = ttk.Label(root, text="Status: Initializing GUI...", relief=tk.SUNKEN, anchor=tk.W, font=status_font, style="TLabel") # Use ttk.Label
-status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
-
-main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
-main_frame.pack(fill=tk.BOTH, expand=True)
-
-# Styling for ttk widgets
-style = ttk.Style()
-try:
-    style.theme_use('clam')
-except tk.TclError:
-    print("Clam theme not available, using default.") # Fallback for environments where clam is not present
-
 # Define base font styles
 base_font_family = "Segoe UI"
 base_font_size = 10
@@ -693,6 +680,19 @@ labelframe_label_font = (base_font_family, bold_font_size, "bold")
 main_title_font = (base_font_family, 14, "bold")
 small_bold_font = (base_font_family, 9, "bold")
 
+status_label = ttk.Label(root, text="Status: Initializing GUI...", relief=tk.SUNKEN, anchor=tk.W, style="Status.TLabel") # Use ttk.Label
+status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
+
+main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
+main_frame.pack(fill=tk.BOTH, expand=True)
+
+# Styling for ttk widgets
+style = ttk.Style()
+try:
+    style.theme_use('clam')
+except tk.TclError:
+    print("Clam theme not available, using default.") # Fallback for environments where clam is not present
+
 # Configure styles
 style.configure("TNotebook", tabposition='n') # Tabs on top
 style.configure("TNotebook.Tab", font=tab_font, padding=[12, 6]) # Increased padding
@@ -707,6 +707,7 @@ style.configure("Small.TButton", font=(base_font_family, 8), padding=4)
 
 style.configure("TLabel", font=label_font, padding=3)
 style.configure("Bold.TLabel", font=bold_font, padding=3)
+style.configure("Status.TLabel", font=status_font, padding=3) # Added style for status_label
 
 style.configure("TEntry", font=entry_font, padding=4)
 style.configure("TCombobox", font=entry_font, padding=4) # Match TEntry
