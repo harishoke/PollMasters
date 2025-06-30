@@ -11,6 +11,7 @@ import os
 import qrcode # For QR code generation
 
 # --- Configuration ---
+APP_VERSION = "1.1.0"  # Application Version
 NODE_SERVER_URL = "http://localhost:3000"
 NODE_API_STATUS = f"{NODE_SERVER_URL}/status"
 # NODE_API_QR = f"{NODE_SERVER_URL}/qr" # Not used if QR comes via socket
@@ -23,12 +24,9 @@ TEMPLATES_FILE = "poll_templates.json"
 
 # --- Global Variables ---
 sio_connected = False
-chat_mapping = {} 
-active_polls_data_from_server = {}
-whatsapp_client_actually_ready = False # අලුතින් එකතු කළ flag එක
-sio_connected = False
 chat_mapping = {} # Stores display_name -> chat_id
 active_polls_data_from_server = {} # Stores {poll_msg_id: poll_data_object}
+whatsapp_client_actually_ready = False # අලුතින් එකතු කළ flag එක
 
 # --- Socket.IO Client ---
 sio = socketio.Client(reconnection_attempts=10, reconnection_delay=3, logger=False, engineio_logger=False) # Added logger flags
@@ -97,7 +95,7 @@ def client_status(status): # Server emits 'client_status'
 def clear_session_gui_elements():
     global active_polls_data_from_server, whatsapp_client_actually_ready # Flag එක මෙතනටත් add කරන්න
     whatsapp_client_actually_ready = False # Logout/clear වලදී False කරන්න
-    global active_polls_data_from_server
+    # global active_polls_data_from_server # Removed redundant global declaration
     active_polls_data_from_server = {}
     if 'qr_display_label' in globals() and qr_display_label.winfo_exists(): qr_display_label.config(image='', text="QR Code (Logged Out)")
     if 'poll_chat_listbox' in globals() and poll_chat_listbox.winfo_exists(): poll_chat_listbox.delete(0, tk.END)
@@ -632,7 +630,7 @@ def _logout_threaded():
     global active_polls_data_from_server, whatsapp_client_actually_ready # Flag එක මෙතනටත් add කරන්න
 
     # Logout උත්සාහය පටන් ගන්නකොටම Client එක not ready විදියට සලකන්න
-    root.after(0, lambda: globals().update(whatsapp_client_actually_ready=False)) 
+    root.after(0, lambda: globals().update(whatsapp_client_actually_ready=False))
     # GUI update එක main thread එකෙන් කරන්න root.after භාවිතා කරනවා
 
     try:
@@ -662,24 +660,64 @@ def _logout_threaded():
 
 # --- GUI Setup ---
 root = tk.Tk()
-root.title("WhatsApp Poll Master Deluxe") # New name!
+root.title(f"WhatsApp Poll Master Deluxe - v{APP_VERSION}") # Include version in title
 root.geometry("950x800") # Slightly larger
 
-status_label = tk.Label(root, text="Status: Initializing GUI...", bd=1, relief=tk.SUNKEN, anchor=tk.W, font=("Segoe UI", 10))
+status_label = ttk.Label(root, text="Status: Initializing GUI...", relief=tk.SUNKEN, anchor=tk.W, font=status_font, style="TLabel") # Use ttk.Label
 status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
 
-main_frame = tk.Frame(root, padx=10, pady=10)
+main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
 main_frame.pack(fill=tk.BOTH, expand=True)
 
 # Styling for ttk widgets
 style = ttk.Style()
-style.configure("TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=[10, 5])
-style.configure("TLabelFrame.Label", font=("Segoe UI", 10, "bold"))
-style.configure("TButton", font=("Segoe UI", 9), padding=5)
-style.configure("Bold.TButton", font=("Segoe UI", 10, "bold"))
+try:
+    style.theme_use('clam')
+except tk.TclError:
+    print("Clam theme not available, using default.") # Fallback for environments where clam is not present
+
+# Define base font styles
+base_font_family = "Segoe UI"
+base_font_size = 10
+bold_font_size = 10
+
+base_font = (base_font_family, base_font_size)
+bold_font = (base_font_family, bold_font_size, "bold")
+status_font = (base_font_family, base_font_size) # Can be same or different
+label_font = (base_font_family, base_font_size)
+button_font = (base_font_family, 9) # Slightly smaller for some buttons
+entry_font = (base_font_family, base_font_size)
+listbox_font = (base_font_family, 9)
+tab_font = (base_font_family, bold_font_size, "bold")
+labelframe_label_font = (base_font_family, bold_font_size, "bold")
+main_title_font = (base_font_family, 14, "bold")
+small_bold_font = (base_font_family, 9, "bold")
+
+# Configure styles
+style.configure("TNotebook", tabposition='n') # Tabs on top
+style.configure("TNotebook.Tab", font=tab_font, padding=[12, 6]) # Increased padding
+style.configure("TLabelFrame", font=label_font, padding=10) # Padding for the frame content
+style.configure("TLabelFrame.Label", font=labelframe_label_font, padding=(0, 0, 0, 5)) # Padding around the label text (L,T,R,B)
+
+style.configure("TButton", font=button_font, padding=6)
+style.configure("Bold.TButton", font=bold_font, padding=6) # For more prominent buttons
+style.configure("Refresh.TButton", font=button_font, padding=6) # Specific style if needed
+style.configure("Small.TButton", font=(base_font_family, 8), padding=4)
 
 
-notebook = ttk.Notebook(main_frame, style="TNotebook")
+style.configure("TLabel", font=label_font, padding=3)
+style.configure("Bold.TLabel", font=bold_font, padding=3)
+
+style.configure("TEntry", font=entry_font, padding=4)
+style.configure("TCombobox", font=entry_font, padding=4) # Match TEntry
+style.map("TCombobox", fieldbackground=[('readonly','white')]) # Ensure readonly combobox looks good
+style.configure("TCheckbutton", font=label_font)
+
+# Custom style for the main title label in Connection Tab
+style.configure("MainTitle.TLabel", font=main_title_font)
+
+
+notebook = ttk.Notebook(main_frame) # Style will be applied via TNotebook configuration
 notebook.pack(fill=tk.BOTH, expand=True)
 
 # == Connection Tab ==
@@ -688,15 +726,15 @@ notebook.add(connection_tab, text="📶 Connection")
 connection_tab.columnconfigure(0, weight=1)
 connection_tab.rowconfigure(1, weight=1) # QR Label should expand
 
-tk.Label(connection_tab, text="WhatsApp Web Connection", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, pady=(0,10), sticky="ew")
-qr_display_label = tk.Label(connection_tab, text="QR Code Area (Connecting...)", bg="lightgrey", relief=tk.GROOVE, height=15, width=40, font=("Courier New", 8))
-qr_display_label.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+ttk.Label(connection_tab, text="WhatsApp Web Connection", style="MainTitle.TLabel").grid(row=0, column=0, pady=(5,15), sticky="ew") # Increased pady
+qr_display_label = tk.Label(connection_tab, text="QR Code Area (Connecting...)", bg="white", relief=tk.SOLID, borderwidth=1, height=15, width=40, font=(base_font_family, 8)) # Adjusted font, bg, relief, borderwidth
+qr_display_label.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0,10)) # Increased padx & pady
 
-connection_button_frame = tk.Frame(connection_tab)
-connection_button_frame.grid(row=2, column=0, pady=(10,0))
-#ttk.Button(connection_button_frame, text="🔄 Check Status / Connect", command=check_whatsapp_status, style="Bold.TButton").pack(side=tk.LEFT, padx=5)
-ttk.Button(connection_button_frame, text="🔄 Refresh Chats", command=fetch_chats, style="Bold.TButton").pack(side=tk.LEFT, padx=5)
-ttk.Button(connection_button_frame, text="🚪 Logout & Clear Session", command=logout_and_reconnect, style="Bold.TButton").pack(side=tk.LEFT, padx=5)
+connection_button_frame = ttk.Frame(connection_tab) # Use ttk.Frame
+connection_button_frame.grid(row=2, column=0, pady=(15,10)) # Increased pady
+#ttk.Button(connection_button_frame, text="🔄 Check Status / Connect", command=check_whatsapp_status, style="Bold.TButton").pack(side=tk.LEFT, padx=5) # Keep style if it's distinct
+ttk.Button(connection_button_frame, text="🔄 Refresh Chats", command=fetch_chats, style="Bold.TButton").pack(side=tk.LEFT, padx=10) # Increased padx
+ttk.Button(connection_button_frame, text="🚪 Logout & Clear Session", command=logout_and_reconnect, style="Bold.TButton").pack(side=tk.LEFT, padx=10) # Increased padx
 
 
 # == Poll Sender Tab ==
@@ -705,71 +743,88 @@ notebook.add(poll_sender_tab, text="📊 Poll Sender")
 
 # Poll Templates section
 poll_template_frame = ttk.LabelFrame(poll_sender_tab, text="Poll Templates", padding=10)
-poll_template_frame.pack(fill=tk.X, padx=5, pady=(5,10))
-poll_template_combobox = ttk.Combobox(poll_template_frame, state="readonly", width=40, font=("Segoe UI", 9))
-poll_template_combobox.pack(side=tk.LEFT, padx=(0,5), pady=5, ipady=2)
+poll_template_frame.pack(fill=tk.X, padx=5, pady=(10,10))
+poll_template_frame.columnconfigure(0, weight=1) # Allow combobox to expand
+poll_template_frame.columnconfigure(1, weight=0) # Buttons take their own space
+
+poll_template_combobox = ttk.Combobox(poll_template_frame, state="readonly", width=40, font=entry_font)
+poll_template_combobox.grid(row=0, column=0, padx=(0,10), pady=5, sticky=tk.EW)
 poll_template_combobox.bind("<<ComboboxSelected>>", load_selected_poll_template)
-ptb_frame = tk.Frame(poll_template_frame) # Button frame for templates
-ptb_frame.pack(side=tk.LEFT, padx=5)
-ttk.Button(ptb_frame, text="💾 Save Current", command=save_current_poll_as_template).pack(side=tk.LEFT, padx=2)
-ttk.Button(ptb_frame, text="🗑️ Delete Selected", command=delete_selected_poll_template).pack(side=tk.LEFT, padx=2)
+
+ptb_frame = ttk.Frame(poll_template_frame)
+ptb_frame.grid(row=0, column=1, padx=10, pady=5)
+ttk.Button(ptb_frame, text="💾 Save Current", command=save_current_poll_as_template, style="Small.TButton").pack(side=tk.LEFT, padx=3)
+ttk.Button(ptb_frame, text="🗑️ Delete Selected", command=delete_selected_poll_template, style="Small.TButton").pack(side=tk.LEFT, padx=3)
 
 
 # Chat/Group Selection
-tk.Label(poll_sender_tab, text="Select Chats/Groups for Poll:", font=("Segoe UI", 9, "bold")).pack(pady=(5,2), anchor=tk.W, padx=5)
-poll_chat_listbox_frame = tk.Frame(poll_sender_tab)
-poll_chat_listbox_frame.pack(fill=tk.X, padx=5, pady=2, ipady=2)
+ttk.Label(poll_sender_tab, text="Select Chats/Groups for Poll:", font=small_bold_font).pack(pady=(10,2), anchor=tk.W, padx=5)
+poll_chat_listbox_frame = ttk.Frame(poll_sender_tab)
+poll_chat_listbox_frame.pack(fill=tk.X, padx=5, pady=5) # Increased pady, removed ipady
 poll_chat_listbox_scrollbar = ttk.Scrollbar(poll_chat_listbox_frame, orient=tk.VERTICAL)
-poll_chat_listbox = tk.Listbox(poll_chat_listbox_frame, selectmode=tk.EXTENDED, yscrollcommand=poll_chat_listbox_scrollbar.set, exportselection=False, font=("Segoe UI", 9), height=6)
+poll_chat_listbox = tk.Listbox(poll_chat_listbox_frame, selectmode=tk.EXTENDED, yscrollcommand=poll_chat_listbox_scrollbar.set, exportselection=False, font=listbox_font, height=6)
 poll_chat_listbox_scrollbar.config(command=poll_chat_listbox.yview)
 poll_chat_listbox_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 poll_chat_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
 # Poll Question
-tk.Label(poll_sender_tab, text="Poll Question:", anchor=tk.W, font=("Segoe UI", 9)).pack(fill=tk.X, padx=5, pady=(8,0))
-poll_question_entry = ttk.Entry(poll_sender_tab, width=60, font=("Segoe UI", 10))
-poll_question_entry.pack(fill=tk.X, padx=5, pady=2, ipady=2)
+ttk.Label(poll_sender_tab, text="Poll Question:", anchor=tk.W, font=label_font).pack(fill=tk.X, padx=5, pady=(15,2))
+poll_question_entry = ttk.Entry(poll_sender_tab, width=60, font=entry_font)
+poll_question_entry.pack(fill=tk.X, padx=5, pady=(0,10)) # Increased pady, removed ipady
 
 # Allow Multiple Answers Checkbox
 allow_multiple_answers_var = tk.BooleanVar(value=False)
 allow_multiple_checkbox = ttk.Checkbutton(poll_sender_tab, text="Allow multiple answers", variable=allow_multiple_answers_var)
-allow_multiple_checkbox.pack(padx=5, pady=(2,5), anchor=tk.W)
+allow_multiple_checkbox.pack(padx=5, pady=(0,10), anchor=tk.W) # Increased pady
 
 # Poll Options Management
 pom_frame = ttk.LabelFrame(poll_sender_tab, text="Poll Options (Enter one by one, max 12)", padding=10)
-pom_frame.pack(fill=tk.X, padx=5, pady=5)
-pom_left_frame = tk.Frame(pom_frame); pom_left_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,10))
-poll_option_entry = ttk.Entry(pom_left_frame, width=40, font=("Segoe UI", 10))
-poll_option_entry.pack(fill=tk.X, pady=(0,5), ipady=2)
-poll_options_listbox_outer_frame = tk.Frame(pom_left_frame) # Frame for listbox + scrollbar
-poll_options_listbox_outer_frame.pack(fill=tk.X, expand=True)
-opt_scrollbar = ttk.Scrollbar(poll_options_listbox_outer_frame, orient=tk.VERTICAL)
-poll_options_listbox = tk.Listbox(poll_options_listbox_outer_frame, height=5, font=("Segoe UI", 9), yscrollcommand=opt_scrollbar.set)
-opt_scrollbar.config(command=poll_options_listbox.yview); opt_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-poll_options_listbox.pack(fill=tk.BOTH, expand=True)
+pom_frame.pack(fill=tk.X, padx=5, pady=10)
+pom_frame.columnconfigure(0, weight=1) # Entry and listbox side expands
+pom_frame.columnconfigure(1, weight=0) # Buttons side fixed
 
-pob_frame = tk.Frame(pom_frame) # Button frame for options
-pob_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
+pom_left_frame = ttk.Frame(pom_frame)
+pom_left_frame.grid(row=0, column=0, sticky=tk.NSEW, padx=(0,10))
+pom_left_frame.rowconfigure(1, weight=1) # Listbox_outer_frame expands vertically
+pom_left_frame.columnconfigure(0, weight=1) # Entry and Listbox_outer_frame expand horizontally
+
+poll_option_entry = ttk.Entry(pom_left_frame, width=40, font=entry_font)
+poll_option_entry.grid(row=0, column=0, sticky=tk.EW, pady=(0,5))
+
+poll_options_listbox_outer_frame = ttk.Frame(pom_left_frame)
+poll_options_listbox_outer_frame.grid(row=1, column=0, sticky=tk.NSEW)
+poll_options_listbox_outer_frame.rowconfigure(0, weight=1)
+poll_options_listbox_outer_frame.columnconfigure(0, weight=1)
+
+opt_scrollbar = ttk.Scrollbar(poll_options_listbox_outer_frame, orient=tk.VERTICAL)
+opt_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+poll_options_listbox = tk.Listbox(poll_options_listbox_outer_frame, height=5, font=listbox_font, yscrollcommand=opt_scrollbar.set)
+poll_options_listbox.grid(row=0, column=0, sticky=tk.NSEW)
+opt_scrollbar.config(command=poll_options_listbox.yview)
+
+
+pob_frame = ttk.Frame(pom_frame)
+pob_frame.grid(row=0, column=1, sticky=tk.NS, padx=10)
 btn_width = 8
-ttk.Button(pob_frame, text="Add", command=add_poll_option, width=btn_width).pack(pady=2, fill=tk.X)
-ttk.Button(pob_frame, text="Edit", command=edit_poll_option, width=btn_width).pack(pady=2, fill=tk.X)
-ttk.Button(pob_frame, text="Delete", command=delete_poll_option, width=btn_width).pack(pady=2, fill=tk.X)
-ttk.Button(pob_frame, text="Clear All", command=clear_poll_options, width=btn_width).pack(pady=2, fill=tk.X)
+ttk.Button(pob_frame, text="Add", command=add_poll_option, width=btn_width, style="Small.TButton").pack(pady=3, fill=tk.X)
+ttk.Button(pob_frame, text="Edit", command=edit_poll_option, width=btn_width, style="Small.TButton").pack(pady=3, fill=tk.X)
+ttk.Button(pob_frame, text="Delete", command=delete_poll_option, width=btn_width, style="Small.TButton").pack(pady=3, fill=tk.X)
+ttk.Button(pob_frame, text="Clear All", command=clear_poll_options, width=btn_width, style="Small.TButton").pack(pady=3, fill=tk.X)
 
 
 # Anti-Ban Settings
 anti_ban_frame = ttk.LabelFrame(poll_sender_tab, text="Send Delay (seconds between messages)", padding=10)
-anti_ban_frame.pack(fill=tk.X, padx=5, pady=(10,5))
+anti_ban_frame.pack(fill=tk.X, padx=5, pady=(15,10)) # Increased pady
 anti_ban_delay_min = tk.DoubleVar(value=2.0)
 anti_ban_delay_max = tk.DoubleVar(value=4.0)
-tk.Label(anti_ban_frame, text="Min:", font=("Segoe UI",9)).pack(side=tk.LEFT, padx=(0,2))
-ttk.Entry(anti_ban_frame, textvariable=anti_ban_delay_min, width=5, font=("Segoe UI",9)).pack(side=tk.LEFT, padx=(0,10))
-tk.Label(anti_ban_frame, text="Max:", font=("Segoe UI",9)).pack(side=tk.LEFT, padx=(0,2))
-ttk.Entry(anti_ban_frame, textvariable=anti_ban_delay_max, width=5, font=("Segoe UI",9)).pack(side=tk.LEFT, padx=(0,10))
+ttk.Label(anti_ban_frame, text="Min:", font=label_font).pack(side=tk.LEFT, padx=(0,2))
+ttk.Entry(anti_ban_frame, textvariable=anti_ban_delay_min, width=5, font=entry_font).pack(side=tk.LEFT, padx=(0,10))
+ttk.Label(anti_ban_frame, text="Max:", font=label_font).pack(side=tk.LEFT, padx=(0,2))
+ttk.Entry(anti_ban_frame, textvariable=anti_ban_delay_max, width=5, font=entry_font).pack(side=tk.LEFT, padx=(0,10))
 
 # Send Poll Button
 send_poll_button = ttk.Button(poll_sender_tab, text="🚀 Send Poll to Selected Chats", command=send_poll_message, style="Bold.TButton")
-send_poll_button.pack(pady=(10,5), ipady=5, fill=tk.X, padx=5)
+send_poll_button.pack(pady=(15,10), ipady=8, fill=tk.X, padx=5) # Increased ipady and pady
 
 
 # == Poll Results Tab ==
@@ -777,27 +832,27 @@ poll_results_tab = ttk.Frame(notebook, padding=10)
 notebook.add(poll_results_tab, text="📈 Poll Results")
 
 # Frame for listing polls and refreshing
-poll_list_management_frame = tk.Frame(poll_results_tab)
-poll_list_management_frame.pack(fill=tk.X, pady=(0,10))
-tk.Label(poll_list_management_frame, text="Previously Sent Polls (Newest First):", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, anchor=tk.W)
-refresh_polls_button = ttk.Button(poll_list_management_frame, text="🔄 Refresh Poll List & Results", command=fetch_all_poll_data_from_server)
-refresh_polls_button.pack(side=tk.RIGHT)
+poll_list_management_frame = ttk.Frame(poll_results_tab)
+poll_list_management_frame.pack(fill=tk.X, pady=(5,10)) # Increased pady
+ttk.Label(poll_list_management_frame, text="Previously Sent Polls (Newest First):", font=bold_font).pack(side=tk.LEFT, anchor=tk.W, padx=(0,10)) # Added padx
+refresh_polls_button = ttk.Button(poll_list_management_frame, text="🔄 Refresh Poll List & Results", command=fetch_all_poll_data_from_server, style="Refresh.TButton")
+refresh_polls_button.pack(side=tk.RIGHT, padx=5) # Added padx
 
 # Listbox for polls
-poll_results_listbox_frame = tk.Frame(poll_results_tab)
-poll_results_listbox_frame.pack(fill=tk.X, pady=5)
+poll_results_listbox_frame = ttk.Frame(poll_results_tab)
+poll_results_listbox_frame.pack(fill=tk.X, pady=10) # Increased pady
 pr_scrollbar = ttk.Scrollbar(poll_results_listbox_frame, orient=tk.VERTICAL)
-poll_results_listbox = tk.Listbox(poll_results_listbox_frame, yscrollcommand=pr_scrollbar.set, exportselection=False, font=("Segoe UI", 9), height=10)
+poll_results_listbox = tk.Listbox(poll_results_listbox_frame, yscrollcommand=pr_scrollbar.set, exportselection=False, font=listbox_font, height=10)
 pr_scrollbar.config(command=poll_results_listbox.yview); pr_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 poll_results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 poll_results_listbox.bind("<<ListboxSelect>>", display_selected_poll_results)
 
 # Frame for displaying results of the selected poll
 poll_results_display_outer_frame = ttk.LabelFrame(poll_results_tab, text="Selected Poll Details & Results", padding=10)
-poll_results_display_outer_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+poll_results_display_outer_frame.pack(fill=tk.BOTH, expand=True, pady=(10,5)) # Increased pady
 
 poll_results_label = scrolledtext.ScrolledText(
-    poll_results_display_outer_frame, wrap=tk.WORD, font=("Courier New", 9),
+    poll_results_display_outer_frame, wrap=tk.WORD, font=(base_font_family, 9),
     state=tk.DISABLED, relief=tk.SOLID, borderwidth=1, height=15
 )
 poll_results_label.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
