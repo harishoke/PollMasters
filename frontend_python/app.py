@@ -663,13 +663,7 @@ root = tk.Tk()
 root.title(f"WhatsApp Poll Master Deluxe - v{APP_VERSION}") # Include version in title
 root.geometry("950x800") # Slightly larger
 
-status_label = ttk.Label(root, text="Status: Initializing GUI...", relief=tk.SUNKEN, anchor=tk.W, font=status_font, style="TLabel") # Use ttk.Label
-status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
-
-main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
-main_frame.pack(fill=tk.BOTH, expand=True)
-
-# Define base font styles first, as they are used by status_label before style object is fully configured
+# Define base font styles first, as they are used by status_label and other GUI elements
 base_font_family = "Segoe UI"
 base_font_size = 10
 bold_font_size = 10
@@ -685,6 +679,12 @@ tab_font = (base_font_family, bold_font_size, "bold")
 labelframe_label_font = (base_font_family, bold_font_size, "bold")
 main_title_font = (base_font_family, 14, "bold")
 small_bold_font = (base_font_family, 9, "bold")
+
+status_label = ttk.Label(root, text="Status: Initializing GUI...", relief=tk.SUNKEN, anchor=tk.W, font=status_font, style="TLabel") # Use ttk.Label
+status_label.pack(side=tk.BOTTOM, fill=tk.X, ipady=3)
+
+main_frame = ttk.Frame(root, padding=10) # Use ttk.Frame and padding
+main_frame.pack(fill=tk.BOTH, expand=True)
 
 # Styling for ttk widgets
 style = ttk.Style()
